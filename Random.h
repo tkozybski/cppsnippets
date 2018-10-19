@@ -1,9 +1,9 @@
 #pragma once
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <limits.h>
 #include <random>
-#include <chrono>
 
 class Random {
 
@@ -30,9 +30,9 @@ class Random {
 
 public:
     //Provide static seed for predictable results eg. for tests
-    Random(uint64_t seed1, uint64_t seed2 = UINT64_C(0xefee3e7b93db3075))
+    Random(uint64_t seed1, uint64_t seed2, uint64_t seed3, uint64_t seed4)
     {
-        _rng.Seed(seed1, seed2);
+        _rng.Seed(seed1, seed2, seed3, seed4);
     }
 
     Random()
@@ -42,11 +42,14 @@ public:
         static thread_local std::random_device rd;
 
         //Two sources of seed makes the randomness better
-		//MinGW fails on providing random_device, so it's a "solution"
+        //MinGW fails on providing random_device, so it's a "solution"
         auto epochTime = std::chrono::high_resolution_clock::now().time_since_epoch().count();
         auto seed1 = (static_cast<uint64_t>(rd()) << 32) | (epochTime & 0xffffffff);
-        auto seed2 = (static_cast<uint64_t>(rd()) << 32) | (epochTime & 0xffffffff);
-        _rng.Seed(seed1, seed2);
+        auto seed2 = (static_cast<uint64_t>(rd()) << 32) | (rd() & 0xffffffff);
+        auto seed3 = (static_cast<uint64_t>(rd()) << 32) | (epochTime & 0xffffffff);
+        auto seed4 = (static_cast<uint64_t>(rd()) << 32) | (rd() & 0xffffffff);
+
+        _rng.Seed(seed1, seed2, seed3, seed4);
     }
 
     double NextDouble()
@@ -94,34 +97,127 @@ public:
 
 private:
     //Not tested on 32bit but it should be slower
-    class Xorshift128plus {
+
+    //class Xor128Bit {
+    //public:
+    //    using result_type = uint64_t;
+    //    void Seed(result_type seed1, result_type seed2)
+    //    {
+    //        u = seed1;
+    //        w = seed2;
+    //        for (int i = 0; i < 256; ++i)
+    //            (*this)();
+    //    }
+
+    //    static inline uint64_t rotl(const uint64_t x, int k)
+    //    {
+    //        return (x << k) | (x >> (64 - k));
+    //    }
+
+    //    //Xorshift128+
+    //    //result_type operator()()
+    //    //{
+    //    //    uint64_t x = u;
+    //    //    const uint64_t y = w;
+    //    //    u = y;
+    //    //    x ^= x << 23;
+    //    //    w = x ^ y ^ (x >> 17) ^ (y >> 26);
+    //    //    return w + y;
+    //    //}
+
+    //    ////Xoroshiro128+
+    //    //result_type operator()()
+    //    //{
+    //    //    const uint64_t s0 = u;
+    //    //    uint64_t s1 = w;
+    //    //    const uint64_t result = s0 + s1;
+
+    //    //    s1 ^= s0;
+    //    //    u = rotl(s0, 24) ^ s1 ^ (s1 << 16); // a, b
+    //    //    w = rotl(s1, 37); // c
+
+    //    //    return result;
+    //    //}
+
+    //    //Xoroshiro128**
+    //    result_type operator()()
+    //    {
+    //        const uint64_t s0 = u;
+    //        uint64_t s1 = w;
+    //        const uint64_t result = rotl(s0 * 5, 7) * 9;
+
+    //        s1 ^= s0;
+    //        u = rotl(s0, 24) ^ s1 ^ (s1 << 16); // a, b
+    //        w = rotl(s1, 37); // c
+
+    //        return result;
+    //    }
+
+    //    static constexpr result_type(min)()
+    //    {
+    //        return 0;
+    //    }
+
+    //    static constexpr result_type(max)()
+    //    {
+    //        return ULLONG_MAX;
+    //    }
+
+    //private:
+    //    uint64_t u, w;
+    //} _rng;
+
+    class Xor256Bit {
     public:
         using result_type = uint64_t;
-
-        explicit Xorshift128plus(result_type seed1 = UINT64_C(0xf8d059aee4c53639), result_type seed2 = UINT64_C(0xefee3e7b93db3075))
+        void Seed(result_type seed1, result_type seed2, result_type seed3, result_type seed4)
         {
             u = seed1;
             w = seed2;
-            //Dont seed yet, let the constructor do it
-            Seed(seed1, seed2);
-        }
+			x = seed3;
+            y = seed4;
 
-        void Seed(result_type seed1, result_type seed2)
-        {
-            u = seed1;
-            w = seed2;
             for (int i = 0; i < 256; ++i)
                 (*this)();
         }
 
+        static inline uint64_t rotl(const uint64_t x, int k)
+        {
+            return (x << k) | (x >> (64 - k));
+        }
+
+        //Xoroshiro256+
+        //result_type operator()()
+        //{
+        //    const uint64_t result_plus = u + y;
+        //    const uint64_t t = w << 17;
+        //    x ^= u;
+        //    y ^= w;
+        //    w ^= x;
+        //    u ^= y;
+
+        //    x ^= t;
+        //    y = rotl(y, 45);
+
+        //    return result_plus;
+        //}
+
+        //Xoroshiro256**
         result_type operator()()
         {
-            uint64_t x = u;
-            const uint64_t y = w;
-            u = y;
-            x ^= x << 23;
-            w = x ^ y ^ (x >> 17) ^ (y >> 26);
-            return w + y;
+            const uint64_t result_starstar = rotl(w * 5, 7) * 9;
+            const uint64_t t = w << 17;
+
+            x ^= u;
+            y ^= w;
+            w ^= x;
+            u ^= y;
+
+            x ^= t;
+
+            y = rotl(y, 45);
+
+            return result_starstar;
         }
 
         static constexpr result_type(min)()
@@ -135,6 +231,6 @@ private:
         }
 
     private:
-        uint64_t u, w;
+        uint64_t u, w, x, y;
     } _rng;
 };
